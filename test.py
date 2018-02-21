@@ -1,157 +1,116 @@
-# Kernel SVM
-
-# Importing the libraries
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import PolynomialFeatures
-from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import confusion_matrix
 
-class ml_classifier(object):
+import keras
+from keras import backend as k
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.utils import to_categorical
 
-    def __init__(self, X=None, y=None, data_file=None, header=0, test_size=0.2,
-                 feature_col_range=[0, 8], label_col=-1, features_degree=1,
-                 include_bias=True):
+from scipy.optimize import minimize
 
-        if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
-            raise ValueError('Invalid feature_col_range')
+data = pd.read_csv('RD-1P.csv', header=0)
+X = data.iloc[:, :-1].values
+y = data.iloc[:, -1].values
 
-        if data_file is not None:
-            data = pd.read_csv(data_file, header=header)
-            X = data.iloc[:, feature_col_range[0]:feature_col_range[1]].values
-            y = data.iloc[:, label_col].values
-        elif X is not None and y is not None:
-            X = np.array(X)
-            y = np.array(y)
-        else:
-            raise RuntimeError('Missing data')
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, )
 
-        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(X, y, test_size = test_size)
+sc = StandardScaler()
+X_train = sc.fit_transform(X_train)
+X_test = sc.transform(X_test)
 
-        self.poly = PolynomialFeatures(features_degree, include_bias=include_bias)
-        self.X_train = self.poly.fit_transform(self.X_train)
+y_train = to_categorical(y_train, 11)
+y_test = to_categorical(y_test, 11)
 
-        self.sc = StandardScaler()
-        self.sc.fit_transform(self.X_train)
+num_samples, _ = X_train.shape
 
-        self.model = None
-        self.cm = None
+model = Sequential()
 
-    def fit(self, hidden_layer_sizes = [30], activation='logistic', solver='adam',
-            alpha=0.0001, batch_size=1, learning_rate='constant', learning_rate_init=0.001,
-            max_iter=200):
+model.add(Dense(activation='sigmoid', input_dim=8, units=15, use_bias=False))
+model.add(Dense(activation='sigmoid', units=30, use_bias=False))
+model.add(Dense(activation='sigmoid', units=11, use_bias=False))
+model.compile(optimizer='adamax', loss='categorical_crossentropy', metrics=['accuracy'])
+# his = model.fit(X_train, y_train, batch_size=1000, epochs=100)
 
-        # Fitting Decision Tree Classification to the Training set
-        print('Fitting the train set...')
+def fold(w):
+    weights = []
+    for layer in model.layers:
+        shape = layer.get_weights()[0].shape
+        elements = shape[0] * shape[1]
+        weights.append(np.reshape(w[:elements], shape))
+        w = w[elements:]
+    return weights
 
-        self.model = MLPClassifier(hidden_layer_sizes=hidden_layer_sizes,
-                                   activation=activation, solver=solver,
-                                   alpha=alpha, batch_size=batch_size,
-                                   learning_rate=learning_rate,
-                                   learning_rate_init=learning_rate_init,
-                                   max_iter=max_iter, verbose=True)
+def result(w):
+    weights = fold(w)
+    for w, layer in zip(weights, model.layers):
+        layer.set_weights([w])
 
+    res = model.evaluate(X_train, y_train, batch_size=num_samples, verbose=0)
 
-        X_train_norm = self.sc.transform(self.X_train)
-        self.model.fit(X_train_norm, self.y_train)
+    return res
 
-        print('\nTrain Set Accuracy: ', self.model.score(X_train_norm, self.y_train) * 100)
+num_w = 0
+w = []
+for layer in model.layers:
+    cur_w = layer.get_weights()[0]
+    shape = cur_w.shape
+    num_w += shape[0] * shape[1]
+    w = np.concatenate((w, np.ravel(cur_w)))
 
-        # Predicting the Test set results
-        if len(self.X_test) > 0:
-            print('\nEvaluating on test set...')
-            y_pred = self.predict(self.X_test)
-            self.evaluate(X=self.X_test, y=self.y_test)
+npop = 100
+sigma = 0.01
+alpha = 0.001
+epochs = 1000
 
-            # Making the Confusion Matrix
-            self.cm = confusion_matrix(self.y_test, y_pred)
+# r = his.history['loss'][-1]
+r = 10
+for i in range(epochs):
+    N = np.random.randn(npop, num_w)
+    R = np.zeros(npop)
+    # new_w = w.copy()
+    for j in range(npop):
+        w_try = w + sigma * N[j]
+        res = result(w_try)[0]
+        R[j] = -res
+    #     if res <= r:
+    #         print(res)
+    #         r = res
+    #         new_w = w_try
+    # w = new_w
+    A = (R - np.mean(R)) / np.std(R)
+    w = w + alpha / (npop*sigma) * np.dot(N.T, A)
 
-    def confusion_matrix(self):
-        return self.cm
+    [loss, acc] = result(w)
+    print('epoch %d/%d. loss: %f, accuracy: %f' % (i+1, epochs, loss, acc*100))
+    r = acc
 
-    def evaluate(self, X=None, y=None, data_file=None, header=0,
-                 feature_col_range=[0, 8], label_col=-1):
+# r = his.history['loss'][-1]
+# r = 10
+for i in range(100):
+    N = np.random.randn(npop, num_w)
+    R = np.zeros(npop)
+    new_w = w.copy()
+    for j in range(npop):
+        w_try = w + sigma * N[j]
+        res = result(w_try)[1]
+        # R[j] = -res
+        if res > r:
+            print(res)
+            r = res
+            new_w = w_try
+    w = new_w
+    # A = (R - np.mean(R)) / np.std(R)
+    # w = w + alpha / (npop*sigma) * np.dot(N.T, A)
 
-        if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
-            raise ValueError('Invalid feature_col_range')
+    [loss, acc] = result(w)
+    print('epoch %d/%d. loss: %f, accuracy: %f' % (i+1, 100, loss, acc*100))
 
-        if data_file is not None:
-            data = pd.read_csv(data_file, header=header)
-            print('\nEvaluating on ', data_file, '...', sep='')
-            X = data.iloc[:, feature_col_range[0]:feature_col_range[1]].values
-            y = data.iloc[:, label_col]
-        elif X is not None and y is not None:
-            X = np.array(X)
-            y = np.array(y)
-        else:
-            raise RuntimeError('Missing data')
-
-        X = self.poly.transform(X)
-        X = self.sc.transform(X)
-
-        accuracy = self.model.score(X, y)
-        print('Accuracy: ', accuracy * 100)
-
-    def probality(self, X=None, data_file=None, header=0, feature_col_range=[0, 8]):
-
-        if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
-            raise ValueError('Invalid feature_col_range')
-
-        if data_file is not None:
-            data = pd.read_csv(data_file, header=header)
-            X = data.iloc[:, feature_col_range[0]:feature_col_range[1]].values
-        elif X is not None and y is not None:
-            X = np.array(X)
-        else:
-            raise RuntimeError('Missing data')
-
-        X = self.poly.transform(X)
-        X = self.sc.transform(X)
-
-        return self.model.predict_proba(X)
-
-    def predict(self, X=None, data_file=None, header=0, feature_col_range=[0, 8]):
-
-        if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
-            raise ValueError('Invalid feature_col_range')
-
-        if data_file is not None:
-            data = pd.read_csv(data_file, header=header)
-            X = data.iloc[:, feature_col_range[0]:feature_col_range[1]].values
-        elif X is not None:
-            X = np.array(X)
-        else:
-            raise RuntimeError('Missing data')
-
-        X = self.poly.transform(X)
-        X = self.sc.transform(X)
-
-        return self.model.predict(X)
-
-if __name__ == '__main__':
-    files = ["RD_1XST.csv", "RD_2P_P.csv", "RD_2X.csv", "RD_3P.csv", "RD_4P.csv",
-             "RD_5P.csv", "RD_6P_P.csv", "RD_7P.csv", "RD_8P.csv", "RD-1P.csv",
-             "RDT_1P.csv", "RDT_1RX.csv", "RDT_2P.csv"];
-
-    classifier = ml_classifier(data_file='RD-1P.csv')
-    classifier.fit()
-    # for file in files:
-    #     classifier = ml_classifier(data_file=file)
-    #     classifier.fit()
-        # print(classifier.confusion_matrix())
-        # classifier.evaluate(data_file='RD_2P_P.csv')
-        # classifier.evaluate(data_file='RD_2X.csv')
-        # classifier.evaluate(data_file='RD_3P.csv')
-        # classifier.evaluate(data_file='RD_4P.csv')
-        # classifier.evaluate(data_file='RD_5P.csv')
-        # classifier.evaluate(data_file='RD_6P_P.csv')
-        # classifier.evaluate(data_file='RD_7P.csv')
-        # classifier.evaluate(data_file='RD_8P.csv')
-        # classifier.evaluate(data_file='RD-1P.csv')
-        # classifier.evaluate(data_file='RDT_1P.csv')
-        # classifier.evaluate(data_file='RDT_1RX.csv')
-        # classifier.evaluate(data_file='RDT_2P.csv')
+test_result = model.evaluate(X_test, y_test, batch_size=1, verbose=0)
+print(test_result)
