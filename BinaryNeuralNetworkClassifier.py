@@ -1,14 +1,3 @@
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-
-import pickle
-
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.metrics import confusion_matrix
-
 import keras
 from keras.models import Sequential
 from keras.models import load_model
@@ -17,20 +6,34 @@ from keras.utils import to_categorical
 from keras.initializers import glorot_uniform
 from keras.regularizers import l2
 
-class neural_network_classifier(object):
+import pickle
 
-    def __init__(self, train_set=None, val_set=None, data_file=None, header=0, num_labels=None,
-                 test_size=0.2, feature_col_range=[0, 8], label_col=-1,
-                 features_degree=2):
+from Classifier import *
+
+np.set_printoptions(threshold=np.nan)
+
+num_labels = 2
+
+class BinaryNeuralNetworkClassifier(Classifier):
+
+    def __init__(self, train_set=None, val_set=None, data_file=None, header=0,
+                 test_size=0.2, feature_col_range=[2, 9], label_col=-1,
+                 features_degree=1, target=5):
 
         if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
             raise ValueError('Invalid feature_col_range')
+        self.col_range = feature_col_range
+        self.label_col = label_col
+
+        self.features_name = ['Bias', 'WELL', 'MD', 'TVDSS', 'GR', 'NPHI', 'RHOZ', 'DT',
+                              'VCL', 'PHIE', 'Deltaic_Facies']
 
         if data_file is not None:
-            data = pd.read_csv(data_file, header=header)
-            X = data.iloc[:, feature_col_range[0]:feature_col_range[1]].values
-            y = data.iloc[:, label_col].values
-            self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(X, y, test_size=test_size)
+            data = pd.read_csv(data_file, header=header).as_matrix
+            true = X[np.where()]
+            X = data.[:, feature_col_range[0]:feature_col_range[1]]
+            y = data.[:, label_col]
+            self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(X, y, test_size = test_size)
         elif train_set is not None and val_set is not None:
             self.X_train = train_set.iloc[:, feature_col_range[0]:feature_col_range[1]].values
             self.X_test = val_set.iloc[:, feature_col_range[0]:feature_col_range[1]].values
@@ -39,65 +42,61 @@ class neural_network_classifier(object):
         else:
             raise RuntimeError('Missing data')
 
-        self.his = None
-        self.cm = None
-        self.score = 0
-
-        if num_labels is None:
-            self.num_labels = max(y) + 1
-        else:
-            self.num_labels = num_labels
-
-        if not (self.num_labels*1.0).is_integer:
-            raise RuntimeError('Invalid labels')
-
-
         self.poly = PolynomialFeatures(features_degree, include_bias=True)
         self.X_train = self.poly.fit_transform(self.X_train)
 
-        self.num_samples, self.num_features = self.X_train.shape
-
+        self.features_scaling = features_scaling
         self.sc = StandardScaler()
-        self.sc.fit(self.X_train)
+        if features_scaling:
+            self.X_train = self.sc.fit_transform(self.X_train)
 
         self.model = None
+        self.cm = None
+        self.score = 0
+
+        self.his = None
+        self.num_samples, self.num_features = self.X_train.shape
+
+        self.sc.fit(self.X_train)
+
+        self.target = target
+        self.y_train = self.y_train == target
 
         self.structure()
 
-    def structure(self,
-                  hidden_layers=[{'activate': 'sigmoid', 'units': 30}],
-                  output_layer_activation='sigmoid', regularization=-0.0):
+    def structure(self, hidden_layers=[30, 30], activation='sigmoid'):
 
         self.model = Sequential()
 
-        self.model.add(Dense(activation=hidden_layers[0]['activate'],
+        self.model.add(Dense(activation=activation,
                              input_dim=self.num_features,
-                             units=hidden_layers[0]['units'],
+                             units=hidden_layers[0],
                              kernel_initializer=glorot_uniform(),
-                             kernel_regularizer=l2(regularization),
+                             kernel_regularizer=l2(0.0),
                              use_bias=False))
 
         for layer in hidden_layers[1:]:
-            self.model.add(Dense(activation=layer['activate'],
-                                 units=layer['units'],
+            self.model.add(Dense(activation=activation,
+                                 units=layer,
                                  kernel_initializer=glorot_uniform(),
-                                 kernel_regularizer=l2(regularization),
+                                 kernel_regularizer=l2(0.0),
                                  use_bias=False))
 
-        self.model.add(Dense(activation=output_layer_activation,
-                             units=self.num_labels,
+        self.model.add(Dense(activation=activation,
+                             units=num_labels,
                              kernel_initializer=glorot_uniform(),
-                             kernel_regularizer=l2(regularization),
+                             kernel_regularizer=l2(0.0),
                              use_bias=False))
 
     def __transform(self, X, y):
         X = self.poly.transform(X)
         X = self.sc.transform(X)
-        y = to_categorical(y, self.num_labels)
+        y = y == self.target
+        y = to_categorical(y, num_labels)
 
         return (X, y)
 
-    def train_backprop(self, batch_size=None, num_epochs=10000, optimizer='adamax', learning_rate=None):
+    def train_backprop(self, batch_size=None, num_epochs=100, optimizer='adamax', learning_rate=None):
 
         if learning_rate is not None:
             if optimizer == 'sgd':
@@ -122,13 +121,15 @@ class neural_network_classifier(object):
 
         self.model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
 
+        es = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0,
+                                           patience=2, verbose=0, mode='auto')
+
         self.his = self.model.fit(self.sc.transform(self.X_train),
-                                  to_categorical(self.y_train, self.num_labels),
+                                  to_categorical(self.y_train, num_labels),
                                   batch_size=batch_size,
                                   epochs=num_epochs,
-                                  validation_split=0.25,
-                                  # validation_data=self.__transform(self.X_test, self.y_test),
-                                  verbose=1).history
+                                  validation_data=self.__transform(self.X_test, self.y_test),
+                                  verbose=1, callbacks=[es]).history
 
         train_accuracy = self.his['acc'][-1]
         train_loss = self.his['loss'][-1]
@@ -139,7 +140,9 @@ class neural_network_classifier(object):
             X = self.poly.transform(self.X_test)
             X = self.sc.transform(X)
             y_pred = self.model.predict(X).argmax(axis=1)
-            self.cm = confusion_matrix(self.y_test, y_pred)
+            print(1*(self.y_test == self.target)[:1000])
+            print(y_pred[:1000])
+            self.cm = confusion_matrix(self.y_test == self.target, y_pred)
             [_, self.score] = self.evaluate(X=self.X_test, y=self.y_test)
 
     def train_evolstrategy(self, batch_size=None, num_epochs=1000, population = 100,
@@ -166,8 +169,8 @@ class neural_network_classifier(object):
         X = self.sc.transform(self.X_train)
         X_val = self.poly.transform(self.X_test)
         X_val = self.sc.transform(X_val)
-        y = to_categorical(self.y_train, self.num_labels)
-        y_val = to_categorical(self.y_test, self.num_labels)
+        y = to_categorical(self.y_train, num_labels)
+        y_val = to_categorical(self.y_test, num_labels)
 
         r = 17
         for i in range(num_epochs):
@@ -237,10 +240,10 @@ class neural_network_classifier(object):
         return self.cm
 
     def evaluate(self, X=None, y=None, data_file=None, header=0,
-                 batch_size=None, feature_col_range=[0, 8], label_col=-1):
+                 batch_size=None, feature_col_range=[2, 9], label_col=-1):
 
         if batch_size is None:
-            batch_size = self.num_labels
+            batch_size = num_labels
 
         if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
             raise ValueError('Invalid feature_col_range')
@@ -258,13 +261,21 @@ class neural_network_classifier(object):
 
         X = self.poly.transform(X)
         X = self.sc.transform(X)
-        y = to_categorical(y, self.num_labels)
+        y = y == self.target
+        y_matrix = to_categorical(y, num_labels)
 
-        [loss, accuracy] = self.model.evaluate(X, y, batch_size=batch_size)
+        [loss, accuracy] = self.model.evaluate(X, y_matrix, batch_size=batch_size)
         print('Accuracy: ', accuracy * 100, '  Loss: ', loss)
+
+        pred = self._post_process(self.model.predict(X).argmax(axis=1))
+        new_acc = np.count_nonzero(y == pred) / len(y) * 100
+        print('Accuracy after post-processing: ', new_acc)
+
+        self.cm = confusion_matrix(y, pred)
+
         return [loss, accuracy]
 
-    def probality(self, X=None, data_file=None, header=0, feature_col_range=[0, 8]):
+    def probality(self, X=None, data_file=None, header=0, feature_col_range=[2, 9]):
 
         if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
             raise ValueError('Invalid feature_col_range')
@@ -272,7 +283,7 @@ class neural_network_classifier(object):
         if data_file is not None:
             data = pd.read_csv(data_file, header=header)
             X = data.iloc[:, feature_col_range[0]:feature_col_range[1]].values
-        elif X is not None and y is not None:
+        elif X is not None:
             X = np.array(X)
         else:
             raise RuntimeError('Missing data')
@@ -282,7 +293,7 @@ class neural_network_classifier(object):
 
         return self.model.predict(X, verbose=1)
 
-    def predict(self, X=None, data_file=None, header=0, feature_col_range=[0, 8]):
+    def predict(self, X=None, data_file=None, header=0, feature_col_range=[2, 9]):
 
         if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
             raise ValueError('Invalid feature_col_range')
@@ -299,9 +310,20 @@ class neural_network_classifier(object):
         X = self.sc.transform(X)
         prob = self.model.predict(X, verbose=1)
 
-        return prob.argmax(axis=1)
+        return self._post_process(prob.argmax(axis=1))
+
+    def _post_process(self, y):
+        for i in range(3, len(y)-3):
+            if (y[i] != y[i-1]) or (y[i] != y[i+1]):
+                if (y[i] != y[i+1]) and (y[i-1] == y[i-2] == y[i-3]):
+                    y[i] = y[i-1]
+                elif y[i+1] == y[i+2] == y[i+3]:
+                    y[i] = y[i+1]
+
+        return y
 
     def plot(self, name='loss and accuracy per epoch'):
+        print(name)
         plt.plot(self.his['loss'], label='train loss')
         plt.plot(self.his['acc'], label='train accuracy')
         plt.plot(self.his['val_loss'], label='evaluate loss')
@@ -331,73 +353,42 @@ class neural_network_classifier(object):
 
     def save_model(self, file_name=None):
         if file_name is None:
-            file_name = 'nn_weights_' + str(int(round(self.score*10000,1)))
+            file_name = 'nn_model_' + str(int(round(self.score*10000,1)))
         self.model.save(file_name)
 
-    def load_model(self, file_name):
-        self.model = load_model(file_name)
-
 if __name__ == '__main__':
-    files = ["RD_1XST.csv", "RD_2P_P.csv", "RD_2X.csv", "RD_3P.csv", "RD_4P.csv",
-             "RD_5P.csv", "RD_6P_P.csv", "RD_7P.csv", "RD_8P.csv", "RD-1P.csv",
-             "RDT_1P.csv", "RDT_1RX.csv", "RDT_2P.csv"];
 
-    train_files = ["RD_2P_P.csv", "RD_2X.csv", "RD_3P.csv", "RD_4P.csv",
-                   "RD_5P.csv", "RD_6P_P.csv", "RD_7P.csv", "RD_8P.csv",
-                   "RDT_1RX.csv", "RDT_2P.csv"];
-    val_files = ["RD_1XST.csv", "RD-1P.csv", "RDT_1P.csv"]
+    classifier = BinaryNeuralNetworkClassifier(
+                                         # data_file='RD-RDT DATA ALL.csv',
+                                         train_set=merge_data(group3 + group2),
+                                         val_set=merge_data(group1),
+                                         )
+    classifier.structure()
+    classifier.train_backprop()
+    # classifier.train_evolstrategy(num_epochs=1000)
+    print(classifier.cm)
 
-    train_set = pd.DataFrame()
-    for file in train_files:
-        train_set =  pd.concat([train_set, pd.read_csv(file, header=None)])
-    val_set = pd.DataFrame()
-    for file in val_files:
-        val_set =  pd.concat([val_set, pd.read_csv(file, header=None)])
-    # print(train_set.shape)
-    # print(val_set.shape)
-
-    # classifier = neural_network_classifier(data_file='RD-1P.csv', num_labels=11,
-    #                                        features_degree=1)
-    # classifier.structure([{'activate': 'sigmoid', 'units': 30},
-    #                       {'activate': 'sigmoid', 'units': 20}],
-    #                      output_layer_activation='sigmoid')
-
-    classifier = neural_network_classifier(data_file="RD-RDT DATA ALL.csv",
-                                           # train_set=train_set,
-                                           # val_set=val_set,
-                                           num_labels=11, test_size=0.9,
-                                           header=1, feature_col_range=[1, 9],
-                                           features_degree=3)
-    classifier.structure([{'activate': 'sigmoid', 'units': 30},
-                          {'activate': 'sigmoid', 'units': 30}],
-                         output_layer_activation='sigmoid')
-
-    # classifier.load_weights('nn_weights_8115')
-    # classifier.save_model()
-    # classifier.load_model()
-    classifier.train_evolstrategy(num_epochs=1000)
+    # classifier = BinaryNeuralNetworkClassifier(
+    #                                      # data_file='RD-RDT DATA ALL.csv',
+    #                                      train_set=merge_data(group3 + group1),
+    #                                      val_set=merge_data(group2),
+    #                                      )
+    # classifier.structure()
     # classifier.train_backprop()
+    # # classifier.train_evolstrategy(num_epochs=1000)
+    #
+    # classifier = BinaryNeuralNetworkClassifier(
+    #                                      # data_file='RD-1P.csv',
+    #                                      train_set=merge_data(group1 + group2),
+    #                                      val_set=merge_data(group3),
+    #                                      )
+    # classifier.structure()
+    #
+    # classifier.train_backprop()
+    # classifier.train_evolstrategy(num_epochs=1000)
     # classifier.save_weights()
 
 
-    for file in files:
-        classifier.evaluate(data_file=file, feature_col_range=[0, 8])
-    classifier.evaluate(data_file="RD-RDT DATA ALL.csv", feature_col_range=[1, 9])
-    # classifier.plot()
-    #     classifier = neural_network_classifier(data_file=file, num_labels=11)
-    #     classifier.structure([{'activate': 'sigmoid', 'units': 30}],
-    #                          output_layer_activation='sigmoid')
-    #     classifier.train()
-    # print(classifier.confusion_matrix())
-    # classifier.evaluate(data_file='RD_2P_P.csv')
-    # classifier.evaluate(data_file='RD_2X.csv')
-    # classifier.evaluate(data_file='RD_3P.csv')
-    # classifier.evaluate(data_file='RD_4P.csv')
-    # classifier.evaluate(data_file='RD_5P.csv')
-    # classifier.evaluate(data_file='RD_6P_P.csv')
-    # classifier.evaluate(data_file='RD_7P.csv')
-    # classifier.evaluate(data_file='RD_8P.csv')
-    # classifier.evaluate(data_file='RD-1P.csv')
-    # classifier.evaluate(data_file='RDT_1P.csv')
-    # classifier.evaluate(data_file='RDT_1RX.csv')
-    # classifier.evaluate(data_file='RDT_2P.csv')
+    # for file in files:
+    #     classifier.evaluate(data_file=file)
+    # classifier.plot(name='[2, 9]')
