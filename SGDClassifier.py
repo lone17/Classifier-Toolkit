@@ -35,7 +35,8 @@ class SGDClassifier(Classifier):
             self.score = self.evaluate(X=self.X_test, y=self.y_test)
 
             # Making the Confusion Matrix
-            self.cm = confusion_matrix(self.y_test, y_pred, labels=[i for i in range(11)])
+            self.cm = confusion_matrix(self.y_test, y_pred,
+                                       labels=[i for i in range(num_labels)])
 
     def save_model(self, file_name=None):
         if file_name is None:

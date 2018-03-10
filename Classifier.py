@@ -1,4 +1,5 @@
 # Importing the libraries
+import os
 import numpy as np
 import pandas as pd
 
@@ -13,17 +14,20 @@ from sklearn.metrics import log_loss
 from sklearn.externals import joblib
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.multiclass import OneVsOneClassifier
-np.set_printoptions(threshold=np.nan)
+
+from util import *
+
+num_labels = 11
 
 class Classifier:
 
     def __init__(self, train_set=None, val_set=None, data_file=None, header=0,
-                 test_size=0.2, feature_col_range=[1, 9], label_col=-1,
+                 test_size=0.2, features_col_range=[1, 9], label_col=-1,
                  features_degree=1, features_scaling=True):
 
-        if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
-            raise ValueError('Invalid feature_col_range')
-        self.col_range = feature_col_range
+        if len(features_col_range) != 2 or features_col_range[0] > features_col_range[1]:
+            raise ValueError('Invalid features_col_range')
+        self.features_col_range = features_col_range
         self.label_col = label_col
 
         self.features_name = ['Bias', 'WELL', 'MD', 'TVDSS', 'GR', 'NPHI', 'RHOZ', 'DT',
@@ -31,15 +35,15 @@ class Classifier:
 
         if data_file is not None:
             data = pd.read_csv(data_file, header=header).values
-            X = data[:, feature_col_range[0]:feature_col_range[1]]
+            X = data[:, features_col_range[0]:features_col_range[1]]
             y = data[:, label_col].astype('int')
             self.X_train, self.X_test, self.y_train, self.y_test = \
                 train_test_split(X, y, test_size = test_size)
         elif train_set is not None and val_set is not None:
             train_set = np.array(train_set)
             val_set = np.array(val_set)
-            self.X_train = train_set[:, feature_col_range[0]:feature_col_range[1]]
-            self.X_test = val_set[:, feature_col_range[0]:feature_col_range[1]]
+            self.X_train = train_set[:, features_col_range[0]:features_col_range[1]]
+            self.X_test = val_set[:, :label_col]
             self.y_train = train_set[:, label_col].astype('int')
             self.y_test = val_set[:, label_col].astype('int')
         else:
@@ -57,7 +61,7 @@ class Classifier:
         self.cm = None
         self.score = 0
 
-    def _post_process(self, y):
+    def post_process(self, y):
         for i in range(3, len(y)-3):
             if (y[i] != y[i-1]) or (y[i] != y[i+1]):
                 if (y[i] != y[i+1]) and (y[i-1] == y[i-2] == y[i-3]):
@@ -72,19 +76,16 @@ class Classifier:
 
     def evaluate(self, X=None, y=None, data_file=None, header=0):
 
-        feature_col_range = self.col_range
+        features_col_range = self.features_col_range
         label_col = self.label_col
-
-        if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
-            raise ValueError('Invalid feature_col_range')
 
         if data_file is not None:
             data = pd.read_csv(data_file, header=header)
             print('\nEvaluating on ', data_file, '...', sep='')
-            X = data[:, feature_col_range[0]:feature_col_range[1]].values
-            y = data[:, label_col]
+            X = data.iloc[:, features_col_range[0]:features_col_range[1]].values
+            y = data.iloc[:, label_col].values
         elif X is not None and y is not None:
-            X = np.array(X)
+            X = np.array(X[:, features_col_range[0]:features_col_range[1]])
             y = np.array(y)
         else:
             raise RuntimeError('Missing data')
@@ -100,26 +101,23 @@ class Classifier:
         accuracy = np.count_nonzero(y == pred) / len(y) * 100
         print('Accuracy: ', accuracy, ' Loss: ', loss)
 
-        pred = self._post_process(pred)
+        pred = self.post_process(pred)
         accuracy = np.count_nonzero(y == pred) / len(y) * 100
         print('Accuracy after post-processing: ', accuracy)
 
-        self.cm = confusion_matrix(y, pred, labels=[i for i in range(11)])
+        self.cm = confusion_matrix(y, pred, labels=[i for i in range(num_labels)])
 
         return [loss, accuracy]
 
     def probality(self, X=None, data_file=None, header=0):
 
-        feature_col_range = self.col_range
-
-        if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
-            raise ValueError('Invalid feature_col_range')
+        features_col_range = self.features_col_range
 
         if data_file is not None:
             data = pd.read_csv(data_file, header=header)
-            X = data[:, feature_col_range[0]:feature_col_range[1]].values
+            X = data.iloc[:, features_col_range[0]:features_col_range[1]].values
         elif X is not None:
-            X = np.array(X)
+            X = np.array(X[:, features_col_range[0]:features_col_range[1]])
         else:
             raise RuntimeError('Missing data')
 
@@ -127,20 +125,17 @@ class Classifier:
         if self.features_scaling:
             X = self.sc.transform(X)
 
-        return self.model.predict_proba(X).tolist()
+        return self.model.predict_proba(X)
 
     def predict(self, X=None, data_file=None, header=0):
 
-        feature_col_range = self.col_range
-
-        if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
-            raise ValueError('Invalid feature_col_range')
+        features_col_range = self.features_col_range
 
         if data_file is not None:
             data = pd.read_csv(data_file, header=header)
-            X = data[:, feature_col_range[0]:feature_col_range[1]].values
+            X = data.iloc[:, features_col_range[0]:features_col_range[1]].values
         elif X is not None:
-            X = np.array(X)
+            X = np.array(X[:, features_col_range[0]:features_col_range[1]])
         else:
             raise RuntimeError('Missing data')
 
@@ -148,7 +143,7 @@ class Classifier:
         if self.features_scaling:
             X = self.sc.transform(X)
 
-        return self._post_process(self.model.predict(X)).tolist()
+        return self.post_process(self.model.predict(X))
 
     def plot(self, x_axis, y_axis, title=None):
         X_set, y_set = self.X_test, self.y_test
@@ -171,23 +166,6 @@ class Classifier:
         plt.legend()
         plt.show()
 
-
-    def load_model(self, file_name):
-        self.model = joblib.load(file_name)
-
-def merge_data(files, header=0):
-    data = pd.DataFrame()
-    for file in files:
-        data =  pd.concat([data, pd.read_csv(file, header=header)])
-
-    return data.values
-
-files = ["RD_1XST.csv", "RD_2P_P.csv", "RD_2X.csv", "RD_3P.csv", "RD_4P.csv",
-         "RD_5P.csv", "RD_6P_P.csv", "RD_7P.csv", "RD_8P.csv", "RD-1P.csv",
-         "RDT_1P.csv", "RDT_1RX.csv", "RDT_2P.csv", "RD-RDT DATA ALL.csv"];
-
-group1 = ['RD_1XST.csv', 'RD_2X.csv', 'RD_3P.csv', 'RD_4P.csv']
-group2 = ['RDT_2P.csv', 'RD_2P_P.csv', 'RD_7P.csv', 'RDT_1P.csv']
-group3 = ['RD-1P.csv', 'RD_5P.csv', 'RD_6P_P.csv', 'RD_8P.csv']
-
-np.random.seed(17)
+    @classmethod
+    def load(Classifier, file_name):
+        return joblib.load(file_name)

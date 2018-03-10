@@ -32,7 +32,8 @@ class NearestCentroidClassfier(Classifier):
             self.score = self.evaluate(X=self.X_test, y=self.y_test)
 
             # Making the Confusion Matrix
-            self.cm = confusion_matrix(self.y_test, y_pred, labels=[i for i in range(11)])
+            self.cm = confusion_matrix(self.y_test, y_pred,
+                                       labels=[i for i in range(num_labels)])
 
     def probality(self, X=None, data_file=None, header=0, feature_col_range=[1, 9]):
         print('probality() is not supported')
