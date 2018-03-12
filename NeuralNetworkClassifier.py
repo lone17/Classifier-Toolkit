@@ -10,13 +10,11 @@ from Classifier import *
 
 from statistics import mean
 
-num_labels = 11
-
 class NeuralNetworkClassifier(Classifier):
 
     def __init__(self, train_set=None, val_set=None, data_file=None, header=0,
-                 test_size=0.2, features_col_range=[3, 8], label_col=-1,
-                 features_degree=2):
+                 test_size=0.2, features_col_range=[0, 8], label_col=-1,
+                 features_degree=3):
 
         if len(features_col_range) != 2 or features_col_range[0] > features_col_range[1]:
             raise ValueError('Invalid features_col_range')
@@ -24,13 +22,14 @@ class NeuralNetworkClassifier(Classifier):
         self.label_col = label_col
 
         if data_file is not None:
-            data = pd.read_csv(data_file, header=header)
-            X = data.iloc[:, features_col_range[0]:features_col_range[1]].values
-            y = data.iloc[:, label_col].values
-            self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(X, y, test_size=test_size)
+            data = pd.read_csv(data_file, header=header).values
+            X = data[:, features_col_range[0]:features_col_range[1]]
+            y = data[:, label_col].astype('int')
+            self.X_train, self.X_test, self.y_train, self.y_test = \
+                train_test_split(X, y, test_size=test_size)
         elif train_set is not None and val_set is not None:
-            # train_set = train_set[np.where(train_set[:,-1] != 5)]
-            # val_set = val_set[np.where(val_set[:,-1] != 5)]
+            train_set = self.filter(train_set)
+            val_set = self.filter(val_set)
             self.X_train = train_set[:, features_col_range[0]:features_col_range[1]]
             self.X_test = val_set[:, features_col_range[0]:features_col_range[1]]
             self.y_train = train_set[:, label_col].astype('int')
@@ -42,16 +41,16 @@ class NeuralNetworkClassifier(Classifier):
         self.X_train = self.poly.fit_transform(self.X_train)
         self.X_test = self.poly.transform(self.X_test)
 
-        self.model = None
-        self.cm = None
-        self.score = 0
-
-        self.his = None
         self.num_samples, self.num_features = self.X_train.shape
 
         self.sc = StandardScaler()
         self.X_train = self.sc.fit_transform(self.X_train)
         self.X_test = self.sc.transform(self.X_test)
+
+        self.his = None
+        self.model = None
+        self.cm = None
+        self.score = 0
 
         self.structure()
 
@@ -112,23 +111,24 @@ class NeuralNetworkClassifier(Classifier):
         X, y = self.X_train, to_categorical(self.y_train, num_labels)
         X_val, y_val = self.X_test, to_categorical(self.y_test, num_labels)
 
-        # self.model.fit(X, y,
-        #                batch_size=1,
-        #                epochs=20,
-        #                validation_data=(X_val, y_val),
-        #                verbose=1)
+        self.model.fit(X, y,
+                      batch_size=1,
+                      epochs=20,
+                      validation_data=(X_val, y_val),
+                      verbose=1)
+
         self.his = self.model.fit(X, y,
                                   batch_size=batch_size,
                                   epochs=num_epochs,
                                   validation_data=(X_val, y_val),
                                   callbacks=[es],
-                                  verbose=1).history
+                                  verbose=0).history
 
         train_accuracy = self.his['acc'][-1]
         train_loss = self.his['loss'][-1]
         print('\nTrain Set Accuracy: ', train_accuracy * 100, '  Loss: ', train_loss)
 
-        self.__evaluate_test(batch_size)
+        self.evaluate_test(batch_size)
 
 
     def train_evolution(self, batch_size=None, num_epochs=1000, population = 100,
@@ -140,7 +140,9 @@ class NeuralNetworkClassifier(Classifier):
 
         print('\nTraining Neural Network with evolution strategy...\n')
 
-        self.model.compile(optimizer='adamax', loss='categorical_crossentropy', metrics=['accuracy'])
+        self.model.compile(optimizer='adamax',
+                           loss='categorical_crossentropy',
+                           metrics=['accuracy'])
 
         self.his = {'acc':[], 'loss':[], 'val_acc':[], 'val_loss':[]}
 
@@ -205,7 +207,7 @@ class NeuralNetworkClassifier(Classifier):
 
         print('\nTrain Set Accuracy: ', acc * 100, '  Loss: ', loss)
 
-        self.__evaluate_test(batch_size)
+        self.evaluate_test(batch_size)
 
     def __fold(self, w):
         weights = []
@@ -224,7 +226,7 @@ class NeuralNetworkClassifier(Classifier):
     def __result(self, X, y):
         return self.model.evaluate(X, y, batch_size=self.num_samples, verbose=0)
 
-    def __evaluate_test(self, batch_size):
+    def evaluate_test(self, batch_size):
         if len(self.X_test) > 0:
             print('\nEvaluating on test set...')
             X = self.X_test
@@ -238,22 +240,21 @@ class NeuralNetworkClassifier(Classifier):
             accuracy = np.count_nonzero(y == pred) / len(y)
             print('Accuracy after post-processing: ', accuracy * 100)
 
-            self.cm = confusion_matrix(y, pred, labels=[i for i in range(num_labels)])
+            self.cm = confusion_matrix(y, pred, labels=labels)
 
             self.score = accuracy
 
     def confusion_matrix(self):
         return self.cm
 
-    def evaluate(self, X=None, y=None, data_file=None, header=0,
-                 batch_size=None):
+    def evaluate(self, X=None, y=None, data_file=None, header=0, batch_size=None):
 
         features_col_range = self.features_col_range
         label_col = self.label_col
 
         if data_file is not None:
             data = pd.read_csv(data_file, header=header).values
-            # data = data[np.where(data[:,-1] != 5)]
+            data = self.filter(data)
             print('\nEvaluating on ', data_file, '...', sep='')
             X = data[:, features_col_range[0]:features_col_range[1]]
             y = data[:, label_col]
@@ -277,7 +278,7 @@ class NeuralNetworkClassifier(Classifier):
         accuracy = np.count_nonzero(y == pred) / len(y)
         print('Accuracy after post-processing: ', accuracy * 100)
 
-        self.cm = confusion_matrix(y, pred, labels=[i for i in range(num_labels)])
+        self.cm = confusion_matrix(y, pred, labels=labels)
 
         return [loss, accuracy]
 
@@ -286,10 +287,10 @@ class NeuralNetworkClassifier(Classifier):
         features_col_range = self.features_col_range
 
         if data_file is not None:
-            data = pd.read_csv(data_file, header=header)
-            X = data.iloc[:, features_col_range[0]:features_col_range[1]].values
+            data = pd.read_csv(data_file, header=header).values
+            X = data[:, features_col_range[0]:features_col_range[1]]
         elif X is not None:
-            X = np.array(X[:, features_col_range[0]:features_col_range[1]])
+            X = np.array(X)
         else:
             raise RuntimeError('Missing data')
 
@@ -303,10 +304,10 @@ class NeuralNetworkClassifier(Classifier):
         features_col_range = self.features_col_range
 
         if data_file is not None:
-            data = pd.read_csv(data_file, header=header)
-            X = data.iloc[:, features_col_range[0]:features_col_range[1]].values
+            data = pd.read_csv(data_file, header=header).values
+            X = data[:, features_col_range[0]:features_col_range[1]]
         elif X is not None:
-            X = np.array(X[:, features_col_range[0]:features_col_range[1]])
+            X = np.array(X)
         else:
             raise RuntimeError('Missing data')
 
@@ -358,59 +359,3 @@ class NeuralNetworkClassifier(Classifier):
                                  metrics=['accuracy'])
 
         return classifier
-
-if __name__ == '__main__':
-
-    # classifier = NeuralNetworkClassifier(
-    #                                      # data_file='RD-RDT DATA ALL.csv',
-    #                                      train_set=merge_data(group3 + group2),
-    #                                      val_set=merge_data(group1),
-    #                                      )
-    # classifier.structure()
-    # # classifier.train_backprop()
-    # classifier.train_evolution(num_epochs=1000)
-    # print(classifier.cm)
-    # for file in files:
-    #     classifier.evaluate(data_file=file)
-    #     print(classifier.cm)
-    # classifier.save()
-
-
-
-
-    classifier = NeuralNetworkClassifier(
-                                         # data_file='RD-RDT DATA ALL.csv',
-                                         train_set=merge_data(group3 + group1),
-                                         val_set=merge_data(group2),
-                                         )
-    classifier.structure()
-    classifier.train_backprop()
-    # classifier.train_evolution(num_epochs=1000)
-    print(classifier.cm)
-    for file in files:
-        classifier.evaluate(data_file=file)
-        print(classifier.cm)
-    classifier.plot()
-    # classifier.save()
-
-
-
-
-    # classifier = NeuralNetworkClassifier(
-    #                                      # data_file='RD-1P.csv',
-    #                                      train_set=merge_data(group1 + group2),
-    #                                      val_set=merge_data(group3),
-    #                                      )
-    # classifier.structure()
-    # # classifier.train_backprop()
-    # classifier.train_evolution(num_epochs=1000)
-    # print(classifier.cm)
-    # for file in files:
-    #     classifier.evaluate(data_file=file)
-    #     print(classifier.cm)
-    # classifier.save()
-
-    # classifier = NeuralNetworkClassifier.load('nn_model_7379')
-    # for file in files:
-    #     classifier.evaluate(data_file=file)
-    #     print(classifier.cm)

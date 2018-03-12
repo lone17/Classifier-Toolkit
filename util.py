@@ -6,6 +6,8 @@ import types
 import tempfile
 import keras.models
 
+from Classifier import *
+from NeuralNetworkClassifier import *
 # np.random.seed(17)
 np.set_printoptions(threshold=np.nan)
 
@@ -45,3 +47,9 @@ def make_keras_picklable():
     cls = keras.models.Model
     cls.__getstate__ = __getstate__
     cls.__setstate__ = __setstate__
+
+def load(file_name):
+    if os.path.isdir(file_name):
+        return NeuralNetworkClassifier.load(file_name)
+
+    return Classifier.load(file_name)

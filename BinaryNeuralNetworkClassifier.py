@@ -5,50 +5,62 @@ from keras.layers import Dense
 from keras.utils import to_categorical
 from keras.initializers import glorot_uniform
 from keras.regularizers import l2
+from keras import backend as K
 
 import pickle
 
 from Classifier import *
 
+from sklearn.metrics import recall_score
+from sklearn.metrics import precision_score
+from sklearn.metrics import f1_score
+
 np.set_printoptions(threshold=np.nan)
 
 num_labels = 2
+feature_col_range = [1, 9]
+label_col = -1
 
 class BinaryNeuralNetworkClassifier(Classifier):
 
     def __init__(self, train_set=None, val_set=None, data_file=None, header=0,
-                 test_size=0.2, feature_col_range=[2, 9], label_col=-1,
-                 features_degree=1, target=5):
+                 test_size=0.2, features_degree=1, target=2):
 
         if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
             raise ValueError('Invalid feature_col_range')
-        self.col_range = feature_col_range
-        self.label_col = label_col
-
-        self.features_name = ['Bias', 'WELL', 'MD', 'TVDSS', 'GR', 'NPHI', 'RHOZ', 'DT',
-                              'VCL', 'PHIE', 'Deltaic_Facies']
 
         if data_file is not None:
-            data = pd.read_csv(data_file, header=header).as_matrix
-            true = X[np.where()]
-            X = data.[:, feature_col_range[0]:feature_col_range[1]]
-            y = data.[:, label_col]
-            self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(X, y, test_size = test_size)
+            data = pd.read_csv(data_file, header=header)
+            X = data.iloc[:, feature_col_range[0]:feature_col_range[1]].values
+            y = data.iloc[:, label_col].values
+            self.X_train, self.X_test, self.y_train, self.y_test = \
+                train_test_split(X, y, test_size=test_size)
         elif train_set is not None and val_set is not None:
-            self.X_train = train_set.iloc[:, feature_col_range[0]:feature_col_range[1]].values
-            self.X_test = val_set.iloc[:, feature_col_range[0]:feature_col_range[1]].values
-            self.y_train = train_set.iloc[:, label_col].values
-            self.y_test = val_set.iloc[:, label_col].values
+            np.random.shuffle(train_set)
+            tmp = train_set[np.where(np.isin(train_set[:,-1], [1, 2, 4, 6, 7, 8, 9, 10]))]
+            # tmp = np.append(tmp, train_set[np.where(train_set[:,-1] == 4)][:400], axis=0)
+            # tmp = np.append(tmp, train_set[np.where(train_set[:,-1] == 6)][:400], axis=0)
+            tmp = np.append(tmp, train_set[np.where(train_set[:,-1] == 0)][:2000], axis=0)
+            tmp = np.append(tmp, train_set[np.where(train_set[:,-1] == 3)][:2000], axis=0)
+            # tmp = np.append(tmp, train_set[np.where(train_set[:,-1] == 3)][:1000], axis=0)
+            # tmp = np.append(tmp, train_set[np.where(train_set[:,-1] == 5)][:15000], axis=0)
+            # tmp = np.append(tmp, train_set[np.where(train_set[:,-1] == 7)][:400], axis=0)
+            train_set = tmp
+            np.random.shuffle(val_set)
+            val_set = val_set[:10000]
+            for i in range(11):
+                print(len(train_set[np.where(train_set[:,-1] == i)]))
+            self.X_train = train_set[:, feature_col_range[0]:feature_col_range[1]]
+            self.X_test = val_set[:, feature_col_range[0]:feature_col_range[1]]
+            self.y_train = train_set[:, label_col]
+            self.y_test = val_set[:, label_col]
         else:
             raise RuntimeError('Missing data')
 
         self.poly = PolynomialFeatures(features_degree, include_bias=True)
         self.X_train = self.poly.fit_transform(self.X_train)
 
-        self.features_scaling = features_scaling
         self.sc = StandardScaler()
-        if features_scaling:
-            self.X_train = self.sc.fit_transform(self.X_train)
 
         self.model = None
         self.cm = None
@@ -64,7 +76,7 @@ class BinaryNeuralNetworkClassifier(Classifier):
 
         self.structure()
 
-    def structure(self, hidden_layers=[30, 30], activation='sigmoid'):
+    def structure(self, hidden_layers=[30], activation='sigmoid'):
 
         self.model = Sequential()
 
@@ -91,12 +103,25 @@ class BinaryNeuralNetworkClassifier(Classifier):
     def __transform(self, X, y):
         X = self.poly.transform(X)
         X = self.sc.transform(X)
-        y = y == self.target
-        y = to_categorical(y, num_labels)
+        y = to_categorical(y == self.target, num_labels)
 
         return (X, y)
 
-    def train_backprop(self, batch_size=None, num_epochs=100, optimizer='adamax', learning_rate=None):
+    def acc(self, y_true, y_pred):
+        """Recall metric.
+
+        Only computes a batch-wise average of recall.
+
+        Computes the recall, a metric for multi-label classification of
+        how many relevant items are selected.
+        """
+        true_positives = K.sum(y_true[:, 0] * (K.reduce_max(y_pred, axis=0)))
+        possible_positives = K.sum(y_true[:, 0])
+        recall = true_positives / possible_positives
+        return recall
+
+    def train_backprop(self, batch_size=1, num_epochs=20, optimizer='adamax',
+                       learning_rate=None):
 
         if learning_rate is not None:
             if optimizer == 'sgd':
@@ -119,7 +144,8 @@ class BinaryNeuralNetworkClassifier(Classifier):
 
         print('\nTraining Neural Network with back propagation...\n')
 
-        self.model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
+        self.model.compile(optimizer=optimizer, loss='categorical_crossentropy',
+                           metrics=['accuracy'])
 
         es = keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0,
                                            patience=2, verbose=0, mode='auto')
@@ -129,7 +155,7 @@ class BinaryNeuralNetworkClassifier(Classifier):
                                   batch_size=batch_size,
                                   epochs=num_epochs,
                                   validation_data=self.__transform(self.X_test, self.y_test),
-                                  verbose=1, callbacks=[es]).history
+                                  verbose=1).history
 
         train_accuracy = self.his['acc'][-1]
         train_loss = self.his['loss'][-1]
@@ -140,13 +166,10 @@ class BinaryNeuralNetworkClassifier(Classifier):
             X = self.poly.transform(self.X_test)
             X = self.sc.transform(X)
             y_pred = self.model.predict(X).argmax(axis=1)
-            print(1*(self.y_test == self.target)[:1000])
-            print(y_pred[:1000])
-            self.cm = confusion_matrix(self.y_test == self.target, y_pred)
             [_, self.score] = self.evaluate(X=self.X_test, y=self.y_test)
 
-    def train_evolstrategy(self, batch_size=None, num_epochs=1000, population = 100,
-                           sigma = 0.01, learning_rate = 0.001, boosting_ops = 100,
+    def train_evolstrategy(self, batch_size=None, num_epochs=1000, population=100,
+                           sigma=0.01, learning_rate=0.001, boosting_ops=0,
                            optimizer='adamax'):
 
         if batch_size is None:
@@ -154,7 +177,9 @@ class BinaryNeuralNetworkClassifier(Classifier):
 
         print('\nTraining Neural Network with evolution strategy...\n')
 
-        self.model.compile(optimizer='adamax', loss='categorical_crossentropy', metrics=['accuracy'])
+        self.model.compile(optimizer='adamax',
+                           loss='categorical_crossentropy',
+                           metrics=['accuracy'])
 
         self.his = {'acc':[], 'loss':[], 'val_acc':[], 'val_loss':[]}
 
@@ -167,10 +192,8 @@ class BinaryNeuralNetworkClassifier(Classifier):
             w = np.concatenate((w, np.ravel(cur_w)))
 
         X = self.sc.transform(self.X_train)
-        X_val = self.poly.transform(self.X_test)
-        X_val = self.sc.transform(X_val)
         y = to_categorical(self.y_train, num_labels)
-        y_val = to_categorical(self.y_test, num_labels)
+        X_val, y_val = self.__transform(self.X_test, self.y_test)
 
         r = 17
         for i in range(num_epochs):
@@ -178,7 +201,8 @@ class BinaryNeuralNetworkClassifier(Classifier):
             R = np.zeros(population)
             for j in range(population):
                 w_try = w + sigma * N[j]
-                [loss, acc] = self.__result(w_try, X, y)
+                # [loss, acc] = self.__result(w_try, X, y)
+                loss = -self.__precision(w_try, X, y)
                 R[j] = -loss
             A = (R - np.mean(R)) / np.std(R)
             w = w + learning_rate / (population*sigma) * np.dot(N.T, A)
@@ -215,7 +239,6 @@ class BinaryNeuralNetworkClassifier(Classifier):
         if len(self.X_test) > 0:
             print('\nEvaluating on test set...')
             y_pred = self.model.predict(X_val).argmax(axis=1)
-            self.cm = confusion_matrix(self.y_test, y_pred)
             [_, self.score] = self.evaluate(X=self.X_test, y=self.y_test)
 
     def __fold(self, w):
@@ -236,14 +259,20 @@ class BinaryNeuralNetworkClassifier(Classifier):
 
         return res
 
+    def __precision(self, w, X, y):
+        weights = self.__fold(w)
+        for w, layer in zip(weights, self.model.layers):
+            layer.set_weights([w])
+
+        pred = (self.model.predict(X).argmax(axis=1))
+
+        return f1_score(y.argmax(axis=1), pred)
+
     def confusion_matrix(self):
         return self.cm
 
     def evaluate(self, X=None, y=None, data_file=None, header=0,
-                 batch_size=None, feature_col_range=[2, 9], label_col=-1):
-
-        if batch_size is None:
-            batch_size = num_labels
+                 batch_size=None):
 
         if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
             raise ValueError('Invalid feature_col_range')
@@ -259,6 +288,10 @@ class BinaryNeuralNetworkClassifier(Classifier):
         else:
             raise RuntimeError('Missing data')
 
+        if batch_size is None:
+            batch_size = X.shape[0]
+            print(batch_size)
+
         X = self.poly.transform(X)
         X = self.sc.transform(X)
         y = y == self.target
@@ -267,15 +300,18 @@ class BinaryNeuralNetworkClassifier(Classifier):
         [loss, accuracy] = self.model.evaluate(X, y_matrix, batch_size=batch_size)
         print('Accuracy: ', accuracy * 100, '  Loss: ', loss)
 
-        pred = self._post_process(self.model.predict(X).argmax(axis=1))
-        new_acc = np.count_nonzero(y == pred) / len(y) * 100
-        print('Accuracy after post-processing: ', new_acc)
+        pred = (self.model.predict(X).argmax(axis=1))
+        # new_acc = np.count_nonzero(y == pred) / len(y) * 100
+        # print('Accuracy after post-processing: ', new_acc)
 
         self.cm = confusion_matrix(y, pred)
+        print('recall: ', recall_score(y, pred))
+        print('precision: ', precision_score(y, pred))
+        print('f1 score: ', f1_score(y, pred))
 
         return [loss, accuracy]
 
-    def probality(self, X=None, data_file=None, header=0, feature_col_range=[2, 9]):
+    def probality(self, X=None, data_file=None, header=0):
 
         if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
             raise ValueError('Invalid feature_col_range')
@@ -293,7 +329,7 @@ class BinaryNeuralNetworkClassifier(Classifier):
 
         return self.model.predict(X, verbose=1)
 
-    def predict(self, X=None, data_file=None, header=0, feature_col_range=[2, 9]):
+    def predict(self, X=None, data_file=None, header=0):
 
         if len(feature_col_range) != 2 or feature_col_range[0] > feature_col_range[1]:
             raise ValueError('Invalid feature_col_range')
@@ -310,17 +346,7 @@ class BinaryNeuralNetworkClassifier(Classifier):
         X = self.sc.transform(X)
         prob = self.model.predict(X, verbose=1)
 
-        return self._post_process(prob.argmax(axis=1))
-
-    def _post_process(self, y):
-        for i in range(3, len(y)-3):
-            if (y[i] != y[i-1]) or (y[i] != y[i+1]):
-                if (y[i] != y[i+1]) and (y[i-1] == y[i-2] == y[i-3]):
-                    y[i] = y[i-1]
-                elif y[i+1] == y[i+2] == y[i+3]:
-                    y[i] = y[i+1]
-
-        return y
+        return self.__post_process(prob.argmax(axis=1))
 
     def plot(self, name='loss and accuracy per epoch'):
         print(name)
@@ -365,7 +391,7 @@ if __name__ == '__main__':
                                          )
     classifier.structure()
     classifier.train_backprop()
-    # classifier.train_evolstrategy(num_epochs=1000)
+    # classifier.train_evolstrategy()
     print(classifier.cm)
 
     # classifier = BinaryNeuralNetworkClassifier(
@@ -376,6 +402,7 @@ if __name__ == '__main__':
     # classifier.structure()
     # classifier.train_backprop()
     # # classifier.train_evolstrategy(num_epochs=1000)
+    # print(classifier.cm)
     #
     # classifier = BinaryNeuralNetworkClassifier(
     #                                      # data_file='RD-1P.csv',
@@ -383,12 +410,12 @@ if __name__ == '__main__':
     #                                      val_set=merge_data(group3),
     #                                      )
     # classifier.structure()
-    #
     # classifier.train_backprop()
-    # classifier.train_evolstrategy(num_epochs=1000)
-    # classifier.save_weights()
+    # # classifier.train_evolstrategy(num_epochs=1000)
+    # print(classifier.cm)
+    # # classifier.save_weights()
 
 
-    # for file in files:
-    #     classifier.evaluate(data_file=file)
+    for file in files:
+        classifier.evaluate(data_file=file)
     # classifier.plot(name='[2, 9]')
