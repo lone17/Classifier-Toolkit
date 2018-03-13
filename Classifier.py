@@ -97,7 +97,7 @@ class Classifier:
             self.score = accuracy
 
     def confusion_matrix(self):
-        return self.cm.tolist()
+        return self.cm
 
     def evaluate(self, X=None, y=None, data_file=None, header=0):
 
@@ -111,7 +111,7 @@ class Classifier:
             X = data[:, features_col_range[0]:features_col_range[1]]
             y = data[:, label_col]
         elif X is not None and y is not None:
-            X = np.array(X)
+            X = np.array(X[:, features_col_range[0]:features_col_range[1]])
             y = np.array(y)
         else:
             raise RuntimeError('Missing data')
@@ -123,7 +123,7 @@ class Classifier:
         prob = self.model.predict_proba(X)
         loss = log_loss(y, prob, labels=labels)
 
-        pred = prob.argmax(axis=1)
+        pred = self.model.predict(X=X)
         accuracy = np.count_nonzero(y == pred) / len(y) * 100
         print('Accuracy: ', accuracy, ' Loss: ', loss)
 
@@ -143,7 +143,7 @@ class Classifier:
             data = pd.read_csv(data_file, header=header).values
             X = data[:, features_col_range[0]:features_col_range[1]]
         elif X is not None:
-            X = np.array(X)
+            X = np.array(X[:, features_col_range[0]:features_col_range[1]])
         else:
             raise RuntimeError('Missing data')
 
@@ -161,7 +161,7 @@ class Classifier:
             data = pd.read_csv(data_file, header=header).values
             X = data[:, features_col_range[0]:features_col_range[1]]
         elif X is not None:
-            X = np.array(X)
+            X = np.array(X[:, features_col_range[0]:features_col_range[1]])
         else:
             raise RuntimeError('Missing data')
 

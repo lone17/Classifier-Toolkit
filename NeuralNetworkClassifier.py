@@ -259,7 +259,7 @@ class NeuralNetworkClassifier(Classifier):
             X = data[:, features_col_range[0]:features_col_range[1]]
             y = data[:, label_col]
         elif X is not None and y is not None:
-            X = np.array(X)
+            X = np.array(X[:, features_col_range[0]:features_col_range[1]])
             y = np.array(y)
         else:
             raise RuntimeError('Missing data')
@@ -290,7 +290,7 @@ class NeuralNetworkClassifier(Classifier):
             data = pd.read_csv(data_file, header=header).values
             X = data[:, features_col_range[0]:features_col_range[1]]
         elif X is not None:
-            X = np.array(X)
+            X = np.array(X[:, features_col_range[0]:features_col_range[1]])
         else:
             raise RuntimeError('Missing data')
 
@@ -307,7 +307,7 @@ class NeuralNetworkClassifier(Classifier):
             data = pd.read_csv(data_file, header=header).values
             X = data[:, features_col_range[0]:features_col_range[1]]
         elif X is not None:
-            X = np.array(X)
+            X = np.array(X[:, features_col_range[0]:features_col_range[1]])
         else:
             raise RuntimeError('Missing data')
 

@@ -1,14 +1,25 @@
-from sklearn.externals import joblib
-import numpy as np
-import pandas as pd
-
-from Classifier import *
-from NeuralNetworkClassifier import *
 from util import *
 
-a = np.arange(7*10).reshape(-1, 7)
-# df = pd.DataFrame(data=a)
-# print(df.values)
-model = NeuralNetworkClassifier.load_model('test')
-p = model.predict(X = a)
+from DecisionTreeClassifier import *
+from RandomForestClassifier import *
+from KNearestNeighborsClassifier import *
+from LogisticRegressionClassifier import *
+from NeuralNetworkClassifier import *
+
+# classifier = load('rf_model_7580')
+# classifier = load('lr_model_7230')
+# classifier = load('knn_model_7177')
+# classifier = load('dt_model_7173')
+classifier = load('nn_model_7077')
+
+X = np.arange(8*10).reshape(-1, 8)
+
+p = classifier.predict(X=X)
 print(p)
+
+prob = classifier.probality(X=X)
+print(prob)
+
+e = classifier.evaluate(X=X, y=p)
+print(e)
+print(classifier.confusion_matrix())
